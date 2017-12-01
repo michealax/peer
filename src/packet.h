@@ -3,14 +3,18 @@
 
 #include <assert.h>
 #include <sys/socket.h>
-#include <winsock2.h>
 #include <string.h>
 #include <stdio.h>
 
 #define BUFLEN 100
 #define PACKETLEN 1500
 #define HEADERLEN 16
+#define SHA1_HASH_SIZE 20
+#define MAX_CHANK_NUM 74
 #define DATALEN PACKETLEN-HEADERLEN
+
+#define MAGICNUM 15441
+#define VERSION 1
 
 #define PKT_WHOHAS 		0
 #define PKT_IHAVE		1
@@ -31,7 +35,7 @@ typedef struct header_s {
 
 typedef struct data_packet {
     header_t header;
-    char data[BUFLEN];
+    char data[DATALEN];
 } data_packet_t;
 
 void init_packet(data_packet_t *, char, short, u_int, u_int, char *);
@@ -47,6 +51,8 @@ data_packet_t *make_denied_packet();
 
 
 void host2net(data_packet_t *);
+void net2host(data_packet_t *);
+void send_packet(int, data_packet_t *, struct sockaddr *);
 
 
 #endif /* _PACKET_H_ */

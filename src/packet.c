@@ -1,3 +1,5 @@
+#include <malloc.h>
+#include <netinet/in.h>
 #include "packet.h"
 #include "spiffy.h"
 
@@ -22,6 +24,9 @@ data_packet_t *make_packet(char type, short len, u_int seq, u_int ack, char *dat
 }
 
 void free_packet(data_packet_t *pkt){
+    if(pkt->data != NULL) {
+        free(pkt->data);
+    }
     free(pkt);
 }
 
@@ -32,6 +37,22 @@ data_packet_t *make_whohas_packet(short len, void *data) {
 
 data_packet_t *make_ihave_packet(short len, void *data) {
     return make_packet(PKT_IHAVE, len, 0, 0, data);
+}
+
+int packet_parser(void* packet) {
+    data_packet_t* pkt = (data_packet_t*)packet;
+    header_t header = pkt->header;
+    /* check magic number */
+    if(header.magicnum != MAGICNUM) {
+        return -1;
+    }
+    /* check the version */
+    if(header.version != VERSION)
+        return -1;
+    /* check the packet_type */
+    if(header.packet_type < PKT_WHOHAS || header.packet_type > PKT_DENIED)
+        return -1;
+    return header.packet_type;
 }
 
 void host2net(data_packet_t *pkt) {
@@ -51,6 +72,8 @@ void net2host(data_packet_t *pkt) {
 }
 
 void send_packet(int sock, data_packet_t *pkt, struct sockaddr *to) {
-    int len = pkt->header.packet_len;
-    spiffy_sendto(sock, pkt, len, 0, to, ()sizeof(*to));
+    size_t len = pkt->header.packet_len;
+    host2net(pkt);
+    spiffy_sendto(sock, pkt, len, 0, to, sizeof(*to));
+    net2host(pkt);
 }
