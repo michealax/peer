@@ -17,8 +17,15 @@ typedef struct queue {
 } queue;
 
 queue *make_queue();
+
 void init_queue(queue *);
-void free_queue(queue *);
+
+void free_queue(queue *, int);
+
 void enqueue(queue *, void *);
+
 void *dequeue(queue *);
+
+void print_queue(queue *);
+
 #endif //PEER_QUEUE_H

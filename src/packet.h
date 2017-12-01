@@ -38,10 +38,12 @@ typedef struct data_packet {
     char data[DATALEN];
 } data_packet_t;
 
+// create/free packet
 void init_packet(data_packet_t *, char, short, u_int, u_int, char *);
 data_packet_t *make_packet(char, short, u_int, u_int, char *);
 void free_packet(data_packet_t *);
 
+// make different packet
 data_packet_t *make_whohas_packet(short, void *);
 data_packet_t *make_ihave_packet(short, void *);
 data_packet_t *make_get_packet();
@@ -49,10 +51,14 @@ data_packet_t *make_data_packet();
 data_packet_t *make_ack_packet();
 data_packet_t *make_denied_packet();
 
-
+// packet method for net
 void host2net(data_packet_t *);
 void net2host(data_packet_t *);
 void send_packet(int, data_packet_t *, struct sockaddr *);
 
+// check method
+int packet_parser(void *);
 
+// debug
+void print_packet(data_packet_t *);
 #endif /* _PACKET_H_ */

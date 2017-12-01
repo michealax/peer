@@ -24,7 +24,7 @@ void *dequeue(queue *q) {
     node *head = q->head;
     void *ret = head->data;
     q->head = head->next;
-    q->n-=1;
+    q->n -= 1;
     free(head);
     if (q->n == 0) {
         q->tail = NULL;
@@ -36,27 +36,35 @@ void enqueue(queue *q, void *data) {
     node *n = malloc(sizeof(node));
     n->data = data;
     n->next = NULL;
-    if (q->tail!=NULL) {
+    if (q->tail != NULL) {
         q->tail->next = n;
     }
     q->tail = n;
     if (q->head == NULL) {
         q->head = n;
     }
-    q->n+=1;
+    q->n += 1;
 }
 
-void free_queue(queue *q){
+void free_queue(queue *q, int r) {
     while (q->n) {
-        dequeue(q);
+        void *ret = dequeue(q);
+        if (r) {
+            free(ret);
+        }
     }
     free(q);
 }
 
-void print_queue(queue *q){
+
+void print_queue(queue *q) {
+    if (q == NULL) {
+        printf("warning! the queue is empty!!!");
+        return;
+    }
     node *n = q->head;
     while (n != NULL) {
-        printf(n->data); // print the data about the node
+        printf("%s\n", (char *) n->data); // print the data about the node
         n = n->next;
     }
 }

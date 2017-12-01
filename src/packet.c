@@ -39,6 +39,7 @@ data_packet_t *make_ihave_packet(short len, void *data) {
     return make_packet(PKT_IHAVE, len, 0, 0, data);
 }
 
+/* check whether it is a right packet or error */
 int packet_parser(void* packet) {
     data_packet_t* pkt = (data_packet_t*)packet;
     header_t header = pkt->header;
@@ -76,4 +77,15 @@ void send_packet(int sock, data_packet_t *pkt, struct sockaddr *to) {
     host2net(pkt);
     spiffy_sendto(sock, pkt, len, 0, to, sizeof(*to));
     net2host(pkt);
+}
+
+void print_packet(data_packet_t *pkt) {
+    printf("magicnum: %d\n", pkt->header.magicnum);
+    printf("version: %d\n", pkt->header.version);
+    printf("type: %d\n", pkt->header.packet_type);
+    printf("header len: %d\n", pkt->header.header_len);
+    printf("packet len: %d\n", pkt->header.packet_type);
+    printf("seq: %d\n", pkt->header.seq_num);
+    printf("ack: %d\n", pkt->header.ack_num);
+    printf("data: %s\n", pkt->data);
 }
