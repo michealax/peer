@@ -12,6 +12,7 @@
 #define SHA1_HASH_SIZE 20
 #define MAX_CHANK_NUM 74
 #define DATALEN PACKETLEN-HEADERLEN
+#define DATA_PACKET_DATA_LEN 1024
 
 #define MAGICNUM 15441
 #define VERSION 1
@@ -46,9 +47,9 @@ void free_packet(data_packet_t *);
 // make different packet
 data_packet_t *make_whohas_packet(short, void *);
 data_packet_t *make_ihave_packet(short, void *);
-data_packet_t *make_get_packet();
-data_packet_t *make_data_packet();
-data_packet_t *make_ack_packet();
+data_packet_t *make_get_packet(short, char *);
+data_packet_t *make_data_packet(short, uint, uint, char *);
+data_packet_t *make_ack_packet(uint, uint);
 data_packet_t *make_denied_packet();
 
 // packet method for net
@@ -58,7 +59,6 @@ void send_packet(int, data_packet_t *, struct sockaddr *);
 
 // check method
 int packet_parser(void *);
-
 // debug
 void print_packet(data_packet_t *);
 #endif /* _PACKET_H_ */

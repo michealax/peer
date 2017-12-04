@@ -3,6 +3,10 @@
 //
 #include <stdio.h>
 #include <malloc.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include "chunk.h"
 #include "packet.h"
 #include "trans.h"
@@ -11,15 +15,11 @@
 extern bt_config_t config;
 extern queue *has_chunks;
 
-queue *init_work() {
-    return NULL;
-}
-
-queue *init_whohas_queue(char *chunkfile) {
-    FILE *fp = fopen(chunkfile, "r");
+queue *init_chunk_file(const char*chunk_file) {
+    FILE *fp = fopen(chunk_file, "r");
+    queue *chunks = make_queue();
     char read_buf[64];
     char sha_buf[2 * SHA1_HASH_SIZE];
-    queue *chunks = make_queue();
     uint8_t *chunk;
     int i;
     while (fgets(read_buf, 64, fp) != NULL) {
@@ -29,40 +29,11 @@ queue *init_whohas_queue(char *chunkfile) {
         enqueue(chunks, chunk);
     }
     fclose(fp);
-    queue *pkts = make_queue();
-    while (chunks->n) {
-        size_t pkt_num = chunks->n < MAX_CHANK_NUM ? chunks->n : MAX_CHANK_NUM;
-        size_t data_len = pkt_num * SHA1_HASH_SIZE + 4;
-        char *data_t = malloc(data_len);
-        *(int *) data_t = pkt_num;
-        i = 0;
-        while ((chunk = dequeue(chunks)) != NULL) {
-            memcpy(data_t + 4 + i * SHA1_HASH_SIZE, chunk, SHA1_HASH_SIZE);
-            free(chunk);
-            i++;
-        }
-        data_packet_t *pkt = make_whohas_packet((short) data_len, data_t);
-        enqueue(pkts, pkt);
-    }
-    free_queue(chunks, 0); // no need to free recursively
-    return pkts;
+    return chunks;
 }
 
-
 void init_has_chunks(const char *has_chunk_file) {
-    FILE *fp = fopen(has_chunk_file, "r");
-    has_chunks = make_queue();
-    char read_buf[64];
-    char sha_buf[2 * SHA1_HASH_SIZE];
-    uint8_t *chunk;
-    int i;
-    while (fgets(read_buf, 64, fp) != NULL) {
-        sscanf(read_buf, "%d %s", &i, sha_buf);
-        chunk = malloc(SHA1_HASH_SIZE);
-        hex2binary(sha_buf, 2 * SHA1_HASH_SIZE, chunk);
-        enqueue(has_chunks, chunk);
-    }
-    fclose(fp);
+    has_chunks = init_chunk_file(has_chunk_file);
 }
 
 int check_i_have(uint8_t *hash_wanted) {
@@ -125,26 +96,13 @@ queue *init_chunk_packet_queue(queue *chunks, data_packet_t *(*make_chunk_packet
     return pkts;
 }
 
+queue *init_whohas_queue(const char *chunk_file) {
+    queue *whohas_chunks = init_chunk_file(chunk_file);
+    return init_chunk_packet_queue(whohas_chunks, make_whohas_packet);
+}
+
 queue *init_ihave_queue(queue *chunks) {
-    queue *pkts = make_queue();
-    uint8_t *chunk;
-    int i;
-    while (chunks->n) {
-        size_t pkt_num = (size_t) (chunks->n < MAX_CHANK_NUM ? chunks->n : MAX_CHANK_NUM);
-        size_t data_len = pkt_num * SHA1_HASH_SIZE + 4;
-        char *data_t = malloc(data_len);
-        *(int *) data_t = pkt_num;
-        i = 0;
-        while ((chunk = dequeue(chunks)) != NULL) {
-            memcpy(data_t + 4 + i * SHA1_HASH_SIZE, chunk, SHA1_HASH_SIZE);
-            free(chunk);
-            i++;
-        }
-        data_packet_t *pkt = make_ihave_packet((short) data_len, data_t);
-        enqueue(pkts, pkt);
-    }
-    free_queue(chunks, 0); // no need to free recursively
-    return pkts;
+    return init_chunk_packet_queue(chunks, make_ihave_packet);
 }
 
 queue *data2chunks_queue(void *data) {
@@ -179,4 +137,55 @@ void send_pkts(int sock, struct sockaddr *dst, queue *pkts) {
         send_packet(sock, pkt, dst);
         free_packet(pkt); // free the data of the node
     }
+}
+
+queue *init_data_queue(uint8_t *sha) {
+    FILE *fp = fopen(config.chunk_file, "r");
+    if (fp == NULL) {
+        fprintf(stderr, "Error!: file %s doesn't exist!", config.chunk_file);
+        return NULL;
+    }
+    char buf[BT_FILENAME_LEN+8]; // File: file_name ***** \n\r
+    char master_data_file[BT_FILENAME_LEN];
+    char sha_buf[2*SHA1_HASH_SIZE];
+    // get the master data file name
+    fgets(buf, BT_FILENAME_LEN+8, fp);
+    sscanf(master_data_file, "File: %s\n", buf);
+    // skip next line
+    fgets(buf, BT_FILENAME_LEN, fp);
+    // find the correct chunk
+    int i = -1;
+    uint8_t sha_binary_buf[SHA1_HASH_SIZE];
+    while (fgets(buf, BT_FILENAME_LEN, fp)!=NULL) {
+        sscanf(buf, "%d %s", &i, sha_buf);
+        hex2binary(sha_buf, 2*SHA1_HASH_SIZE, sha_binary_buf);
+        if(memcmp(sha, sha_binary_buf, SHA1_HASH_SIZE)==0){
+            break;
+        }
+    }
+    fclose(fp);
+    if(i==-1) {
+        fprintf(stderr, "Error!: No such chunk: %s", sha_buf);
+        return NULL;
+    }
+    // map the file to memory
+    int data_fd = open(master_data_file, O_RDONLY);
+    struct stat master_data_stat;
+    fstat(data_fd, &master_data_stat);
+    char *master_data = mmap(0, (size_t)master_data_stat.st_size, PROT_READ, MAP_SHARED, data_fd, 0);
+    close(data_fd);
+    // make the data pkts
+    queue *data_pkts = make_queue();
+    data_packet_t *pkt;
+    for(uint j = 0; j < BT_CHUNK_KSIZE; j++){
+        char *data = master_data+i*BT_CHUNK_SIZE+j*1024;
+        pkt = make_data_packet(HEADERLEN+DATA_PACKET_DATA_LEN, 0, j+1, data);
+        enqueue(data_pkts, pkt);
+    }
+    munmap(master_data, (size_t)master_data_stat.st_size); // munmap the memory
+    return data_pkts;
+}
+
+int sha1_num(uint8_t *sha1) {
+
 }

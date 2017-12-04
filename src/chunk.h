@@ -5,6 +5,7 @@
 #include <inttypes.h>
 
 #define BT_CHUNK_SIZE (512 * 1024)
+#define BT_CHUNK_KSIZE 512
 
 #define ascii2hex(ascii, len, buf) hex2binary((ascii),(len),(buf))
 #define hex2ascii(buf, len, ascii) binary2hex((buf),(len),(ascii))

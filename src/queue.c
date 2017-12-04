@@ -4,6 +4,7 @@
 
 #include <stdio.h>
 #include <malloc.h>
+#include <string.h>
 #include "queue.h"
 
 void init_queue(queue *q) {
@@ -54,6 +55,28 @@ void free_queue(queue *q, int r) {
         }
     }
     free(q);
+}
+
+queue *queue_copy(queue *src, size_t data_len) {
+    queue *dst = make_queue();
+    node *current = src->head;
+    while (current!=NULL) {
+        void *data=malloc(data_len);
+        memcpy(data, current->data, data_len);
+        enqueue(dst, data);
+        current = current->next;
+    }
+    return dst;
+}
+
+int is_in_queue(queue *src, void *data, size_t data_len) {
+    node *current = src->head;
+    while (current!=NULL) {
+        if (memcmp(data, current->data, data_len) == 0) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 

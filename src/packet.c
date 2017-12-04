@@ -39,6 +39,24 @@ data_packet_t *make_ihave_packet(short len, void *data) {
     return make_packet(PKT_IHAVE, len, 0, 0, data);
 }
 
+data_packet_t *make_get_packet(short len, char *data) {
+    return make_packet(PKT_GET, len, 0, 0, data);
+}
+
+data_packet_t *make_data_packet(short len, uint ack_num, uint seq_num, char *data) {
+    return make_packet(PKT_DATA, len, seq_num, ack_num, data);
+}
+
+data_packet_t *make_ack_packet(uint ack_num, uint seq_num) {
+    return make_packet(PKT_ACK, HEADERLEN, seq_num, ack_num, NULL);
+}
+
+data_packet_t *make_denied_packet() {
+    return make_packet(PKT_DENIED, HEADERLEN, 0, 0, NULL);
+}
+
+
+
 /* check whether it is a right packet or error */
 int packet_parser(void* packet) {
     data_packet_t* pkt = (data_packet_t*)packet;

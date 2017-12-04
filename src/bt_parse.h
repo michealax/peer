@@ -4,6 +4,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include "queue.h"
 
 #define BT_FILENAME_LEN 255
 #define BT_MAX_PEERS 1024
@@ -42,5 +43,11 @@ void bt_dump_config(bt_config_t *c);
 bt_peer_t *bt_peer_info(const bt_config_t *c, int peer_id);
 
 void set_peer_file(char *, const char *);
+
+bt_peer_t *get_peer(const bt_config_t *bt,  struct sockaddr_in addr);
+
+void add_peer(bt_peer_t *, bt_peer_t *);
+
+int check_peers(queue *peers, bt_peer_t *peer);
 
 #endif /* _BT_PARSE_H_ */

@@ -26,6 +26,10 @@ void enqueue(queue *, void *);
 
 void *dequeue(queue *);
 
+queue *queue_copy(queue *, size_t);
+
+int is_in_queue(queue *, void *, size_t);
+
 void print_queue(queue *);
 
 #endif //PEER_QUEUE_H

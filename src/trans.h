@@ -11,10 +11,12 @@
 queue *init_work();
 
 // init the pkts to send
-queue *init_whohas_queue(char *);
+queue *init_whohas_queue(const char *);
 queue *init_ihave_queue(queue *);
+queue *init_data_queue(uint8_t *sha);
 
 /* save the chunks i have */
+queue *init_chunk_file(const char *);
 void init_has_chunks(const char *);
 /* convert the data in pkt to the chunks queue */
 int check_i_have(uint8_t *);

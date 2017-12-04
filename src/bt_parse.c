@@ -53,6 +53,18 @@ bt_peer_t *bt_peer_info(const bt_config_t *config, int peer_id) {
     return NULL;
 }
 
+bt_peer_t *get_peer(const bt_config_t *config, struct sockaddr_in addr) {
+    assert(config != NULL);
+
+    bt_peer_t *p;
+    for (p = config->peers; p != NULL; p = p->next) {
+        if (p->addr.sin_port == addr.sin_port) {
+            return p;
+        }
+    }
+    return NULL;
+}
+
 void bt_parse_command_line(bt_config_t *config) {
     int c, old_optind;
     bt_peer_t *p;
@@ -164,5 +176,25 @@ void bt_dump_config(bt_config_t *config) {
 }
 
 void set_peer_file(char *peer_file, const char *file_name) {
-    memcpy(peer_file, file_name, BT_FILENAME_LEN);
+    strcpy(peer_file, file_name);
+}
+
+void add_peer(bt_peer_t *peers, bt_peer_t *peer) {
+    bt_peer_t *current = peers;
+    while (current->next!=NULL){
+        current = current->next;
+    }
+    current->next = peer;
+}
+
+int check_peers(queue *peers, bt_peer_t *peer) {
+    node *current = peers->head;
+    while (current!=NULL) {
+        bt_peer_t * cur_peer = (bt_peer_t *)current->data;
+        if (cur_peer->id == peer->id) {
+            return 1;
+        }
+        current = current->next;
+    }
+    return 0;
 }
