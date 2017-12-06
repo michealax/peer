@@ -10,8 +10,6 @@
 #include "chunk.h"
 #include "packet.h"
 #include "trans.h"
-#include "bt_parse.h"
-
 extern bt_config_t config;
 extern queue *has_chunks;
 
@@ -47,7 +45,7 @@ int check_i_have(uint8_t *hash_wanted) {
     uint8_t *hash_value;
     while (current != NULL) {
         hash_value = current->data;
-        if (memcmp(hash_wanted, hash_value, SHA1_HASH_SIZE) != 0) {
+        if (memcmp(hash_wanted, hash_value, SHA1_HASH_SIZE) == 0) {
             return 1;
         }
         current = current->next;
@@ -60,14 +58,16 @@ queue *which_i_have(queue *wanted) {
     uint8_t *chunk;
     while ((chunk = dequeue(wanted)) != NULL) {
         int ret = check_i_have(chunk);
-        if (ret == -1) {
-            free(chunk);
-            free_queue(wanted, 1);
-            return NULL;
-        } else if (ret == 1) {
+        if (ret == 1) {
             enqueue(result, chunk);
+        } else {
+            free(chunk);
         }
-        free(chunk);
+
+    }
+    if(!result->n) {
+        free_queue(result, 0);
+        result = NULL;
     }
     // free(wanted); //as wanted is empty simply free it
     return result;
@@ -89,7 +89,7 @@ queue *init_chunk_packet_queue(queue *chunks, data_packet_t *(*make_chunk_packet
             free(chunk);
             i++;
         }
-        data_packet_t *pkt = make_chunk_packet((short) data_len, data_t);
+        data_packet_t *pkt = make_chunk_packet((short) (data_len+HEADERLEN), data_t);
         enqueue(pkts, pkt);
     }
     free_queue(chunks, 0); // no need to free recursively
@@ -107,39 +107,17 @@ queue *init_ihave_queue(queue *chunks) {
 
 queue *data2chunks_queue(void *data) {
     queue *chunks = make_queue();
-    int num = *(int *) data;
+    int num = *(char *) data;
     char *ptr = data + 4;
     for (int i = 0; i < num; i++) {
         char *chunk = malloc(SHA1_HASH_SIZE);
-        memcpy(chunk, ptr + i * 4, SHA1_HASH_SIZE);
+        memcpy(chunk, ptr + i * SHA1_HASH_SIZE, SHA1_HASH_SIZE);
         enqueue(chunks, chunk);
     }
     return chunks;
 }
 
-void flood_whohas(int sock, queue *pkts) {
-    data_packet_t *pkt;
-    while ((pkt = dequeue(pkts)) != NULL) { // can use the send_pkts() because we can't free the pkt here
-        bt_peer_t *current = config.peers;
-        while (current != NULL) {
-            if (current->id != config.identity) {
-                send_packet(sock, pkt, (struct sockaddr *) &current->addr);
-            }
-            current = current->next;
-        }
-        free_packet(pkt); // free the data of the node
-    }
-}
-
-void send_pkts(int sock, struct sockaddr *dst, queue *pkts) {
-    data_packet_t *pkt;
-    while ((pkt = dequeue(pkts)) != NULL) {
-        send_packet(sock, pkt, dst);
-        free_packet(pkt); // free the data of the node
-    }
-}
-
-queue *init_data_queue(uint8_t *sha) {
+data_packet_t **init_data_array(uint8_t *sha) {
     FILE *fp = fopen(config.chunk_file, "r");
     if (fp == NULL) {
         fprintf(stderr, "Error!: file %s doesn't exist!", config.chunk_file);
@@ -175,17 +153,46 @@ queue *init_data_queue(uint8_t *sha) {
     char *master_data = mmap(0, (size_t)master_data_stat.st_size, PROT_READ, MAP_SHARED, data_fd, 0);
     close(data_fd);
     // make the data pkts
-    queue *data_pkts = make_queue();
+    data_packet_t **data_pkts = malloc(BT_CHUNK_KSIZE*sizeof(data_packet_t *));
     data_packet_t *pkt;
     for(uint j = 0; j < BT_CHUNK_KSIZE; j++){
         char *data = master_data+i*BT_CHUNK_SIZE+j*1024;
-        pkt = make_data_packet(HEADERLEN+DATA_PACKET_DATA_LEN, 0, j+1, data);
-        enqueue(data_pkts, pkt);
+        pkt = make_data_packet(HEADERLEN+DATA_PACKET_DATA_LEN, 0, j, data);
+        data_pkts[j] = pkt;
     }
     munmap(master_data, (size_t)master_data_stat.st_size); // munmap the memory
     return data_pkts;
 }
 
-int sha1_num(uint8_t *sha1) {
+/* 发出队列中的所有包 */
+void send_pkts(int sock, struct sockaddr *dst, queue *pkts) {
+    data_packet_t *pkt;
+    while ((pkt = dequeue(pkts)) != NULL) {
+        fflush(stdout);
+        send_packet(sock, pkt, dst);
+        free_packet(pkt); // free the data of the node
+    }
+}
 
+/* 遍历询问网络中的所有节点 */
+void flood_whohas(int sock, queue *pkts) {
+    data_packet_t *pkt;
+    while ((pkt = dequeue(pkts)) != NULL) { // can use the send_pkts() because we can't free the pkt here
+        bt_peer_t *current = config.peers;
+        while (current != NULL) {
+            if (current->id != config.identity) {
+                send_packet(sock, pkt, (struct sockaddr *) &current->addr);
+            }
+            current = current->next;
+        }
+        free_packet(pkt); // free the data of the node
+    }
+}
+
+/* 发送data数据包 */
+void send_data_packets(up_conn_t *conn, int sock, struct sockaddr *dst) {
+    while(conn->last_sent<conn->available && conn->last_sent<BT_CHUNK_KSIZE) {
+        send_packet(sock, conn->pkts[conn->last_sent], dst);
+        conn->last_sent++;
+    }
 }

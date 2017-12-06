@@ -24,9 +24,6 @@ data_packet_t *make_packet(char type, short len, u_int seq, u_int ack, char *dat
 }
 
 void free_packet(data_packet_t *pkt){
-    if(pkt->data != NULL) {
-        free(pkt->data);
-    }
     free(pkt);
 }
 
@@ -78,16 +75,16 @@ void host2net(data_packet_t *pkt) {
     pkt->header.magicnum = htons(pkt->header.magicnum);
     pkt->header.header_len = htons(pkt->header.header_len);
     pkt->header.packet_len = htons(pkt->header.packet_len);
-    pkt->header.seq_num = htons(pkt->header.seq_num);
-    pkt->header.ack_num = htons(pkt->header.ack_num);
+    pkt->header.seq_num = htonl(pkt->header.seq_num);
+    pkt->header.ack_num = htonl(pkt->header.ack_num);
 }
 
 void net2host(data_packet_t *pkt) {
     pkt->header.magicnum = ntohs(pkt->header.magicnum);
     pkt->header.header_len = ntohs(pkt->header.header_len);
     pkt->header.packet_len = ntohs(pkt->header.packet_len);
-    pkt->header.seq_num = ntohs(pkt->header.seq_num);
-    pkt->header.ack_num = ntohs(pkt->header.ack_num);
+    pkt->header.seq_num = ntohl(pkt->header.seq_num);
+    pkt->header.ack_num = ntohl(pkt->header.ack_num);
 }
 
 void send_packet(int sock, data_packet_t *pkt, struct sockaddr *to) {

@@ -3,6 +3,7 @@
 //
 
 #include "queue.h"
+#include "rdt.h"
 #include <netinet/in.h>
 
 #ifndef PEER_TRANS_H
@@ -13,7 +14,7 @@ queue *init_work();
 // init the pkts to send
 queue *init_whohas_queue(const char *);
 queue *init_ihave_queue(queue *);
-queue *init_data_queue(uint8_t *sha);
+data_packet_t **init_data_array(uint8_t *sha);
 
 /* save the chunks i have */
 queue *init_chunk_file(const char *);
@@ -27,4 +28,5 @@ queue *data2chunks_queue(void *);
 void send_pkts(int, struct sockaddr *, queue *);
 /* send pkts to everyone */
 void flood_whohas(int, queue *);
+void send_data_packets(up_conn_t *, int, struct sockaddr *);
 #endif //PEER_TRANS_H

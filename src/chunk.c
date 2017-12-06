@@ -86,6 +86,7 @@ void print_hash(uint8_t *hash) {
         fprintf(stderr, "%02x", hash[i]);
     }
     fprintf(stderr, "\n");
+    fflush(stderr);
 }
 
 #ifdef _TEST_CHUNK_C_

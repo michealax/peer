@@ -27,7 +27,7 @@ void binary2hex(uint8_t *buf, int len, char *ascii);
 void hex2binary(char *hex, int len, uint8_t *buf);
 
 /* print hash to check */
-void print_hash(uint8_t *hash)
+void print_hash(uint8_t *hash);
 
 #ifdef __cplusplus
 }
