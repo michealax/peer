@@ -13,8 +13,6 @@
 
 #include <sys/types.h>
 #include <arpa/inet.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,7 +22,6 @@
 #include "input_buffer.h"
 #include "packet.h"
 #include "trans.h"
-#include "task.h"
 #include "timer.h"
 #include "chunk.h"
 
@@ -36,6 +33,12 @@ task_t *task;
 queue *has_chunks;
 up_pool_t up_pool;
 down_pool_t down_pool;
+
+void handle_whohas(data_packet_t *pkt, bt_peer_t *peer);
+void handle_ihave(data_packet_t *pkt, bt_peer_t *peer);
+void handle_get(data_packet_t *pkt, bt_peer_t *peer);
+void handle_data(data_packet_t *pkt, bt_peer_t *peer);
+void handle_ack(data_packet_t *pkt, bt_peer_t *peer);
 
 void peer_run(bt_config_t *config);
 
@@ -74,128 +77,32 @@ void process_inbound_udp(int sock) {
     char buf[BUFLEN];
     data_packet_t *pkt;
     fromlen = sizeof(from);
-    up_conn_t *up_conn;
-    down_conn_t *down_conn;
 
-    while (spiffy_recvfrom(sock, buf, BUFLEN, 0, (struct sockaddr *) &from, &fromlen) != -1) {
+    if (spiffy_recvfrom(sock, buf, BUFLEN, 0, (struct sockaddr *) &from, &fromlen) != -1) {
         // printf("PROCESS_INBOUND_UDP SKELETON -- replace!\n""Incoming message from %s:%d\n%s\n\n", inet_ntoa(from.sin_addr), ntohs(from.sin_port), buf);
         pkt = (data_packet_t *) buf;
-        net2host(pkt); // as the data is converted to net format
+        net2host(pkt); // 网络端转换
         int packet_type = packet_parser(pkt);
-        bt_peer_t *peer = get_peer(&config, from);// who send the packet
+        bt_peer_t *peer = get_peer(&config, from); // 查找对应发送的peer方
         switch (packet_type) {
-            case PKT_WHOHAS: { // parse the who has pkt and answer
-                queue *chunks = data2chunks_queue(pkt->data); // since every queue made by malloc so we don't care about NULL ptr
-                queue *ihave = which_i_have(chunks);
-                if (ihave != NULL) {
-                    queue *pkts = init_ihave_queue(ihave);
-                    send_pkts(sock, (struct sockaddr *) &from, pkts);
-                    free_queue(pkts, 0);
-                    free_queue(ihave, 0);
-                }
-                free_queue(chunks, 0);
-
+            case PKT_WHOHAS: {
+                handle_whohas(pkt, peer); // parse the who has pkt and answer
                 break;
             }
             case PKT_IHAVE: {
-                queue *chunks = data2chunks_queue(pkt->data);
-                chunk_t *chunk = choose_chunk(task, chunks, peer);  // 查找需要下载的块
-                if (get_down_conn(&down_pool, peer) != NULL) {
-                    break; // already use the conn
-                } else{
-                    if (down_pool.conn==down_pool.max_conn){
-                        fprintf(stderr, "Full pool!");
-                    } else {
-                        add_to_down_pool(&down_pool, peer, chunk);
-                        chunk->inuse = 1;
-                        data_packet_t *get=make_get_packet(HEADERLEN+SHA1_HASH_SIZE, (char *)chunk->sha1);
-                        send_packet(sock, get, (struct sockaddr *) &from);
-                        free_packet(get);
-                    }
-                }
-               /* while ((chunk = dequeue(chunks)) != NULL) {
-                    available_peer(task, chunk, peer);
-                }
-                if (task->timer.tv_sec == 0) {
-                    timer_start(&task->timer);
-                }*/
-                free_queue(chunks, 1);
+                handle_ihave(pkt, peer);
                 break;
             }
             case PKT_GET: {
-                up_conn = get_up_conn(&up_pool, peer);
-                if (up_conn == NULL) {
-                    if (up_pool.conn >= up_pool.max_conn) { // 已满 拒绝请求
-                        fprintf(stderr, "full");
-                        data_packet_t *denied_pkt = make_denied_packet();
-                        send_packet(sock, denied_pkt, (struct sockaddr *) &from);
-                        free_packet(denied_pkt);
-                    } else {
-                        data_packet_t **pkts = init_data_array((uint8_t *) pkt->data);
-                        up_conn = add_to_up_pool(&up_pool, peer, pkts);
-                        if (up_conn != NULL) {
-                            send_data_packets(up_conn, sock, (struct sockaddr *) &from);
-                        }
-                    }
-                } else {
-                    // 已经加入队列,无法修改
-                    fprintf(stderr, "already in pool!");
-                }
+                handle_get(pkt, peer);
                 break;
             }
             case PKT_DATA: {
-                down_conn = get_down_conn(&down_pool, peer);
-                uint seq = pkt->header.seq_num;
-                int data_len = pkt->header.packet_len-HEADERLEN;
-                data_packet_t *ack_packet=NULL;
-                if (down_conn != NULL) { // 链接不存在 不知道哪来的数据包(⊙o⊙)
-                    if (seq == down_conn->next_ack) {
-                        memcpy(down_conn->chunk->data + down_conn->pos, pkt->data, (size_t)data_len); // copy the data
-                        down_conn->pos+=data_len;
-                        down_conn->next_ack += 1;
-                        //if (timer_now(&down_conn->timer) >= 3000) {
-                            //printf("seq: %d time out", seq);
-                            ack_packet = make_ack_packet(seq, 0);
-                        //}
-                    } else { //
-                        ack_packet = make_ack_packet(down_conn->next_ack - 1, 0); // 立刻发送ack
-                    }
-                    if (ack_packet!=NULL) {
-                        send_packet(sock, ack_packet, (struct sockaddr *) &from);
-                        timer_start(&down_conn->timer);
-                        free_packet(ack_packet);
-                    }
-                    if (down_conn->pos==BT_CHUNK_SIZE) { // pos 位置移到末尾 下载完成
-                        down_conn->chunk->flag = 1;
-                        task->chunk_num++;
-                        remove_from_down_pool(&down_pool, peer);
-                        if (task->chunk_num==task->need_num) {
-                            task = finish_task(task);
-                        } else {  // 继续下一请求
-                            continue_task(task, &down_pool, sock);
-                        }
-                    }
-                }
+                handle_data(pkt, peer);
                 break;
             }
             case PKT_ACK: {
-                up_conn = get_up_conn(&up_pool, peer);
-                if (up_conn == NULL) break; // 不存在连接
-                if (pkt->header.ack_num == CHUNK_SIZE) { // finish total 512 packet and end work
-                    remove_from_up_pool(&up_pool, peer);
-                } else if (pkt->header.ack_num >= up_conn->last_ack + 1) { // 有效ack
-                    up_conn->last_ack = pkt->header.ack_num; // 更新ack
-                    up_conn->available = up_conn->last_ack + up_conn->rwnd; // 扩展available范围
-                    up_conn->duplicate = 1; // 更新duplicate
-                    send_data_packets(up_conn, sock, (struct sockaddr *) &from); // 可以继续发包
-                } else if (pkt->header.ack_num == up_conn->last_ack) { //
-                    up_conn->duplicate++;
-                    if (up_conn->duplicate >= 3) {
-                        up_conn->last_sent = pkt->header.ack_num; // send回退
-                        send_data_packets(up_conn, sock, (struct sockaddr *) &from);
-                        up_conn->duplicate = 1; // 更新duplicate
-                    }
-                }
+                handle_ack(pkt, peer);
                 break;
             }
             case PKT_DENIED: {
@@ -206,8 +113,6 @@ void process_inbound_udp(int sock) {
             }
         }
     }
-
-
 }
 
 void process_get(char *chunkfile, char *outputfile) {
@@ -284,14 +189,121 @@ void peer_run(bt_config_t *config) {
                 process_user_input(STDIN_FILENO, userbuf, handle_user_input, "Currently unused");
             }
         } else {
-            if (task != NULL) {
-                printf("233333");
-                fflush(stdout);
-                if (task->timer.tv_sec != 0 && timer_now(&task->timer) > 500) {
-                    flood_get(task, sock); // to get the chunk
+            if (task != NULL) { // 说明task 但task完成时不进入该分支
+                int f = remove_stalled_chunks(&down_pool);
+                if(f){
+                    continue_task(task, &down_pool, sock);
                 }
-
             }
+        }
+    }
+}
+
+void handle_whohas(data_packet_t *pkt, bt_peer_t *peer) {
+    queue *chunks = data2chunks_queue(pkt->data); // since every queue made by malloc so we don't care about NULL ptr
+    queue *ihave = which_i_have(chunks);
+    if (ihave != NULL) {
+        queue *pkts = init_ihave_queue(ihave);
+        send_pkts(sock, (struct sockaddr *) &peer->addr, pkts);
+        free_queue(pkts, 0);
+        free_queue(ihave, 0);
+    }
+    free_queue(chunks, 0);
+}
+
+void handle_ihave(data_packet_t *pkt, bt_peer_t *peer){
+    queue *chunks = data2chunks_queue(pkt->data);
+    chunk_t *chunk = choose_chunk(task, chunks, peer);// 查找需要下载的块
+    if (get_down_conn(&down_pool, peer) != NULL) { // 假设连接已存在 返回
+        return; // already use the conn
+    } else{
+        if (down_pool.conn==down_pool.max_conn){ // 不存在可用连接
+            fprintf(stderr, "Full pool!");
+        } else {
+            add_to_down_pool(&down_pool, peer, chunk);
+            chunk->inuse = 1;
+            data_packet_t *get=make_get_packet(HEADERLEN+SHA1_HASH_SIZE, (char *)chunk->sha1);
+            send_packet(sock, get, (struct sockaddr *) &peer->addr);
+            free_packet(get);
+        }
+    }
+    /* while ((chunk = dequeue(chunks)) != NULL) {
+         available_peer(task, chunk, peer);
+     }
+     if (task->timer.tv_sec == 0) {
+         timer_start(&task->timer);
+     }*/
+    free_queue(chunks, 1);
+}
+
+void handle_get(data_packet_t *pkt, bt_peer_t *peer){
+    up_conn_t *up_conn = get_up_conn(&up_pool, peer);
+    if (up_conn == NULL) {
+        if (up_pool.conn >= up_pool.max_conn) { // 已满 拒绝请求
+            data_packet_t *denied_pkt = make_denied_packet();
+            send_packet(sock, denied_pkt, (struct sockaddr *) &peer->addr);
+            free_packet(denied_pkt);
+        } else {
+            data_packet_t **pkts = init_data_array((uint8_t *) pkt->data);
+            up_conn = add_to_up_pool(&up_pool, peer, pkts);
+            if (up_conn != NULL) {
+                send_data_packets(up_conn, sock, (struct sockaddr *) &peer->addr);
+            }
+        }
+    } else {
+        fprintf(stderr, "already in pool!\n"); // 已经加入队列,无法修改
+    }
+}
+
+void handle_data(data_packet_t *pkt, bt_peer_t *peer) {
+    down_conn_t *down_conn = get_down_conn(&down_pool, peer);
+    uint seq = pkt->header.seq_num;
+    int data_len = pkt->header.packet_len-HEADERLEN;
+    data_packet_t *ack_packet=NULL;
+    if (down_conn != NULL) { // 链接不存在 不知道哪来的数据包(⊙o⊙)
+        timer_start(&down_conn->timer);
+        if (seq == down_conn->next_ack) {
+            memcpy(down_conn->chunk->data + down_conn->pos, pkt->data, (size_t)data_len); // copy the data
+            down_conn->pos+=data_len;
+            down_conn->next_ack += 1;
+            ack_packet = make_ack_packet(seq, 0); // 经过检测发现立刻发送效率比较高(逃
+        } else {
+            ack_packet = make_ack_packet(down_conn->next_ack - 1, 0); // 立刻发送冗余ack
+        }
+        if (ack_packet!=NULL) {
+            send_packet(sock, ack_packet, (struct sockaddr *) &peer->addr);
+            timer_start(&down_conn->timer); // 重启定时器
+            free_packet(ack_packet);
+        }
+        if (down_conn->pos==BT_CHUNK_SIZE) { // pos 位置移到末尾 下载完成
+            down_conn->chunk->flag = 1;
+            task->chunk_num++;
+            remove_from_down_pool(&down_pool, peer);
+            if (task->chunk_num==task->need_num) {
+                task = finish_task(task);
+            } else {  // 继续下一请求
+                continue_task(task, &down_pool, sock);
+            }
+        }
+    }
+}
+
+void handle_ack(data_packet_t *pkt, bt_peer_t *peer) {
+    up_conn_t *up_conn = get_up_conn(&up_pool, peer);
+    if (up_conn == NULL) return; // 不存在连接 直接忽略
+    if (pkt->header.ack_num == CHUNK_SIZE) { // finish total 512 packet and end work
+        remove_from_up_pool(&up_pool, peer);
+    } else if (pkt->header.ack_num >= up_conn->last_ack + 1) { // 有效ack
+        up_conn->last_ack = pkt->header.ack_num; // 更新ack
+        up_conn->available = up_conn->last_ack + up_conn->rwnd; // 扩展available范围
+        up_conn->duplicate = 1; // 更新duplicate
+        send_data_packets(up_conn, sock, (struct sockaddr *) &peer->addr); // 可以继续发包
+    } else if (pkt->header.ack_num == up_conn->last_ack) {  // 重复ack
+        up_conn->duplicate++;
+        if (up_conn->duplicate >= 3) {
+            up_conn->last_sent = pkt->header.ack_num; // send回退
+            send_data_packets(up_conn, sock, (struct sockaddr *) &peer->addr);
+            up_conn->duplicate = 1; // 更新duplicate
         }
     }
 }

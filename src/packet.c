@@ -88,10 +88,10 @@ void net2host(data_packet_t *pkt) {
 }
 
 void send_packet(int sock, data_packet_t *pkt, struct sockaddr *to) {
-    size_t len = pkt->header.packet_len;
+    size_t len = (size_t)pkt->header.packet_len;
     host2net(pkt);
     spiffy_sendto(sock, pkt, len, 0, to, sizeof(*to));
-    net2host(pkt);
+    net2host(pkt); // 不一定需要 假如发完直接free则无需转换
 }
 
 void print_packet(data_packet_t *pkt) {

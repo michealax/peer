@@ -6,9 +6,6 @@
 #include <malloc.h>
 #include <string.h>
 #include <assert.h>
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <unistd.h>
 #include "packet.h"
 #include "task.h"
 #include "chunk.h"
@@ -41,7 +38,6 @@ up_conn_t *get_up_conn(up_pool_t *pool, bt_peer_t *peer) {
     up_conn_t **conns = pool->conns;
     for(int i = 0; i < pool->max_conn; i++) {
         if(conns[i]!=NULL && conns[i]->receiver->id==peer->id) {
-            fprintf(stderr, "%d\n", i);
             return conns[i];
         }
     }
@@ -258,18 +254,12 @@ void flood_get(task_t *task, int sock){
 
 task_t *finish_task(task_t *task) {
     chunk_t *chunk;
-    // map the file to memory
-    // store the whole data to the file
-    int data_fd = open(task->output_file, O_WRONLY);
-    char *file = mmap(0, (size_t)task->need_num*BT_CHUNK_SIZE, PROT_READ, MAP_SHARED, data_fd, 0);
-    close(data_fd);
-    for(uint j = 0; j < task->need_num; j++){
-        char *data = file+j*BT_CHUNK_SIZE;
-        chunk=dequeue(task->chunks);
-        memcpy(data, chunk->data, BT_CHUNK_SIZE);
-        free_chunk(chunk);
+    FILE *fp = fopen(task->output_file, "wb+"); // 内存映射方式直接读写存在一定问题
+    for(uint j = 0; j < task->need_num; j++) {
+        chunk = dequeue(task->chunks);
+        fwrite(chunk->data, 512, 1024, fp);
     }
-    munmap(file, (size_t)task->need_num*BT_CHUNK_SIZE); // munmap the memory
+    fclose(fp);
     free_queue(task->chunks, 0);
     free(task);
     return NULL;
@@ -314,11 +304,36 @@ void continue_task(task_t *task, down_pool_t *pool, int sock) {
         }
     }
     if (flag) {
-        printf("23333");
         add_to_down_pool(pool, peer, chunk);
         chunk->inuse = 1;
         data_packet_t *pkt = make_get_packet(SHA1_HASH_SIZE + HEADERLEN, (char *) chunk->sha1);
         send_packet(sock, pkt, (struct sockaddr *)&peer->addr);
         free_packet(pkt);
     }
+}
+
+int remove_stalled_chunks(down_pool_t *pool) { // 检查所有chunk是否处于停滞状态
+    struct timeval now;
+    gettimeofday(&now, NULL); // 获得时间
+    chunk_t *chunk;
+    int ret = 0;
+    for (int i = 0; i < pool->max_conn; i++) {
+        if (pool->conns[i]!=NULL) {
+            chunk=pool->conns[i]->chunk;
+            if (chunk->inuse&&timer_now(&pool->conns[i]->timer, &now) > 30000) {
+                chunk->inuse = 0;
+                remove_from_down_pool(pool, pool->conns[i]->sender);
+                ret = 1;
+            }
+        }
+    }
+    return ret;
+}
+
+void print_data(char *data, int size) {
+    for (int i = 0; i < size; i++) {
+        fprintf(stderr, "%02x", data[i]);
+    }
+    fprintf(stderr, "\n");
+    fflush(stderr);
 }

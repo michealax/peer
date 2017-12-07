@@ -55,7 +55,6 @@ bt_peer_t *bt_peer_info(const bt_config_t *config, int peer_id) {
 
 bt_peer_t *get_peer(const bt_config_t *config, struct sockaddr_in addr) {
     assert(config != NULL);
-
     bt_peer_t *p;
     for (p = config->peers; p != NULL; p = p->next) {
         if (p->addr.sin_port == addr.sin_port) {

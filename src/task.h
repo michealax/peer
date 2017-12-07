@@ -14,7 +14,6 @@
 #define WINDOW_SIZE 8
 #define CHUNK_SIZE 512
 typedef struct chunk_s {
-    int id;
     uint8_t sha1[SHA1_HASH_SIZE];
     int flag; // finished
     int inuse;
@@ -95,4 +94,7 @@ void flood_get(task_t *task, int sock);
 
 chunk_t *choose_chunk(task_t *task, queue *chunks, bt_peer_t *peer);
 
+void print_data(char *data, int size);
+
+int remove_stalled_chunks(down_pool_t *pool);
 #endif //PEER_TASK_H

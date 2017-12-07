@@ -6,7 +6,7 @@
 #include <string.h>
 #include <stdio.h>
 
-#define BUFLEN 100
+#define BUFLEN 1500
 #define PACKETLEN 1500
 #define HEADERLEN 16
 #define SHA1_HASH_SIZE 20

@@ -11,14 +11,9 @@ void timer_start(struct timeval *starter) {
     gettimeofday(starter, NULL);
 }
 
-int timer_now(struct timeval *starter) {
-    if (starter==NULL || starter->tv_sec==0) {
-        return 0;
-    }
-    struct timeval now;
-    gettimeofday(&now, NULL);
-    long diff_sec = now.tv_sec-starter->tv_sec;
-    long diff_usec = now.tv_usec-starter->tv_usec;
+int timer_now(struct timeval *starter, struct timeval *now) {
+    long diff_sec = now->tv_sec-starter->tv_sec;
+    long diff_usec = now->tv_usec-starter->tv_usec;
     int ret = diff_sec*1000+diff_usec/1000; // return the ms
     return ret;
 }

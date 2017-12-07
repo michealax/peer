@@ -82,8 +82,11 @@ void hex2binary(char *hex, int len, uint8_t *buf) {
 }
 
 void print_hash(uint8_t *hash) {
-    for (int i = 0; i < SHA1_HASH_SIZE; i++) {
-        fprintf(stderr, "%02x", hash[i]);
+    int i;
+    for (i = 0; i < SHA1_HASH_SIZE;) {
+        fprintf(stderr, "%02x", hash[i++]);
+        if (!(i % 4))
+            fprintf(stderr, " ");
     }
     fprintf(stderr, "\n");
     fflush(stderr);
