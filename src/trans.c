@@ -91,14 +91,15 @@ queue *init_chunk_packet_queue(queue *chunks, data_packet_t *(*make_chunk_packet
         }
         data_packet_t *pkt = make_chunk_packet((short) (data_len+HEADERLEN), data_t);
         enqueue(pkts, pkt);
-    }
-    free_queue(chunks, 0); // no need to free recursively
+    } // no need to free recursively
     return pkts;
 }
 
 queue *init_whohas_queue(const char *chunk_file) {
     queue *whohas_chunks = init_chunk_file(chunk_file);
-    return init_chunk_packet_queue(whohas_chunks, make_whohas_packet);
+    queue *ret=init_chunk_packet_queue(whohas_chunks, make_whohas_packet);
+    free_queue(whohas_chunks, 0);
+    return ret;
 }
 
 queue *init_ihave_queue(queue *chunks) {
@@ -123,19 +124,20 @@ data_packet_t **init_data_array(uint8_t *sha) {
         fprintf(stderr, "Error!: file %s doesn't exist!", config.chunk_file);
         return NULL;
     }
-    char buf[BT_FILENAME_LEN+8]; // File: file_name ***** \n\r
+    char buf[BT_FILENAME_LEN+5] = {0}; // File: file_name ***** \n\r
     char master_data_file[BT_FILENAME_LEN];
     char sha_buf[2*SHA1_HASH_SIZE];
     // get the master data file name
-    fgets(buf, BT_FILENAME_LEN+8, fp);
-    sscanf(master_data_file, "File: %s\n", buf);
+    fgets(buf, BT_FILENAME_LEN, fp);
+    sscanf(buf, "File: %s\n", master_data_file);
     // skip next line
     fgets(buf, BT_FILENAME_LEN, fp);
     // find the correct chunk
     int i = -1;
     uint8_t sha_binary_buf[SHA1_HASH_SIZE];
-    while (fgets(buf, BT_FILENAME_LEN, fp)!=NULL) {
-        sscanf(buf, "%d %s", &i, sha_buf);
+    char buf2[63];
+    while (fgets(buf2, 64, fp)!=NULL) {
+        sscanf(buf2, "%d %s", &i, sha_buf);
         hex2binary(sha_buf, 2*SHA1_HASH_SIZE, sha_binary_buf);
         if(memcmp(sha, sha_binary_buf, SHA1_HASH_SIZE)==0){
             break;
@@ -156,8 +158,8 @@ data_packet_t **init_data_array(uint8_t *sha) {
     data_packet_t **data_pkts = malloc(BT_CHUNK_KSIZE*sizeof(data_packet_t *));
     data_packet_t *pkt;
     for(uint j = 0; j < BT_CHUNK_KSIZE; j++){
-        char *data = master_data+i*BT_CHUNK_SIZE+j*1024;
-        pkt = make_data_packet(HEADERLEN+DATA_PACKET_DATA_LEN, 0, j, data);
+        char *data = master_data+i*BT_CHUNK_SIZE+j*SEND_PACKET_DATA_LEN;
+        pkt = make_data_packet(HEADERLEN+SEND_PACKET_DATA_LEN, 0, j+1, data);
         data_pkts[j] = pkt;
     }
     munmap(master_data, (size_t)master_data_stat.st_size); // munmap the memory

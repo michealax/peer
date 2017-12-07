@@ -1,5 +1,6 @@
 //
 // Created by syang on 12/2/17.
+// Merge on 12/6/17
 //
 
 #include <malloc.h>
@@ -15,6 +16,119 @@
 
 extern down_pool_t down_pool;
 
+/* up_conn */
+void init_up_pool(up_pool_t *pool, int max_conn) {
+    pool->max_conn = max_conn;
+    pool->conn = 0;
+    pool->conns = malloc(max_conn * sizeof(up_conn_t *));
+    memset(pool->conns, 0, max_conn * sizeof(up_conn_t *));
+}
+
+up_conn_t *make_up_conn(bt_peer_t *peer, data_packet_t **pkts) { // 用数组控制在发送数据时更为方便
+    assert(pkts!=NULL);
+    up_conn_t *conn = malloc(sizeof(up_conn_t));
+    conn->receiver = peer;
+    conn->rwnd = 8;
+    conn->pkts = pkts;
+    conn->last_ack = 0;
+    conn->last_sent = 0;
+    conn->available = conn->last_ack+conn->rwnd;
+    conn->duplicate = 1;
+    return conn;
+}
+
+up_conn_t *get_up_conn(up_pool_t *pool, bt_peer_t *peer) {
+    up_conn_t **conns = pool->conns;
+    for(int i = 0; i < pool->max_conn; i++) {
+        if(conns[i]!=NULL && conns[i]->receiver->id==peer->id) {
+            fprintf(stderr, "%d\n", i);
+            return conns[i];
+        }
+    }
+    return NULL;
+}
+
+up_conn_t *add_to_up_pool(up_pool_t *pool, bt_peer_t *peer, data_packet_t **pkts){
+    up_conn_t *conn = make_up_conn(peer, pkts);
+    for(int i = 0; i < pool->max_conn; i++) {
+        if(pool->conns[i] == NULL) {
+            pool->conns[i] = conn;
+            break;
+        }
+    }
+    pool->conn++;
+    return conn;
+}
+
+void remove_from_up_pool(up_pool_t *pool, bt_peer_t *peer) {
+    up_conn_t **conns = pool->conns;
+    for(int i = 0; i < pool->max_conn; i++) {
+        if(conns[i]!=NULL && conns[i]->receiver->id==peer->id) {
+            for(int j = 0; j<512; j++) {
+                free(conns[i]->pkts[j]);
+            }
+            free(conns[i]->pkts); // since the queue is not use
+            free(conns[i]);
+            conns[i] = NULL;
+            pool->conn--;
+            break;
+        }
+    }
+}
+
+/* down_conn函数 */
+void init_down_pool(down_pool_t *pool, int max_conn) {
+    pool->max_conn = max_conn;
+    pool->conn = 0;
+    pool->conns = malloc(max_conn* sizeof(down_conn_t *));
+    memset(pool->conns, 0, max_conn* sizeof(down_conn_t *));
+}
+
+down_conn_t *make_down_conn(bt_peer_t *peer, chunk_t *chunk) {
+    assert(chunk!=NULL);
+    down_conn_t *conn = malloc(sizeof(down_conn_t));
+    conn->next_ack = 1;
+    conn->pos = 0;
+    conn->chunk = chunk;
+    conn->sender = peer;
+    timer_start(&conn->timer);
+    return conn;
+}
+
+down_conn_t *get_down_conn(down_pool_t *pool, bt_peer_t *peer) {
+    down_conn_t **conns = pool->conns;
+    for(int i = 0; i < pool->max_conn; i++) {
+        if(conns[i]!=NULL && conns[i]->sender->id==peer->id) {
+            return conns[i];
+        }
+    }
+    return NULL;
+}
+
+down_conn_t *add_to_down_pool(down_pool_t *pool, bt_peer_t *peer, chunk_t *chunk) {
+    down_conn_t *conn = make_down_conn(peer, chunk);
+    for(int i = 0; i < pool->max_conn; i++) {
+        if(pool->conns[i] == NULL) {
+            pool->conns[i] = conn;
+            break;
+        }
+    }
+    pool->conn++;
+    return conn;
+}
+void remove_from_down_pool(down_pool_t *pool, bt_peer_t *peer) {
+    down_conn_t **conns = pool->conns;
+    for(int i = 0; i < pool->max_conn; i++) {
+        if(conns[i]!=NULL && conns[i]->sender->id==peer->id) {
+            free(conns[i]);
+            conns[i] = NULL; // data不需要free
+            pool->conn--;
+            break;
+        }
+    }
+}
+
+/* chunk函数 */
 chunk_t *make_chunk(int id, const uint8_t *sha1) {
     chunk_t *chunk = malloc(sizeof(chunk_t));
     chunk->num = 0;
@@ -23,6 +137,7 @@ chunk_t *make_chunk(int id, const uint8_t *sha1) {
     chunk->id = id;
     memcpy(chunk->sha1, sha1, SHA1_HASH_SIZE);
     chunk->data = malloc(BT_CHUNK_SIZE);
+    chunk->peers = make_queue();
     return chunk;
 }
 
@@ -56,6 +171,21 @@ task_t *init_task(const char *output_file, const char *chunk_file, int max_conn)
     return task;
 }
 
+void add_to_chunks(chunk_t **chunks, chunk_t *chunk, int num){
+    for(int i = 0; i < num; i++) {
+        if(chunks[i] == NULL) {
+            chunks[i] = chunk;
+        } else {
+            if (chunk->num < chunks[i]->num) {
+                for(int j=i; j<num-1; j++){
+                    chunks[j+1]=chunks[j];
+                }
+                chunks[i] = chunk;
+            }
+        }
+    }
+}
+
 void available_peer(task_t *task, uint8_t *sha1, bt_peer_t *peer){
     assert(task != NULL);
     chunk_t *chunk;
@@ -70,21 +200,6 @@ void available_peer(task_t *task, uint8_t *sha1, bt_peer_t *peer){
                 enqueue(chunk->peers, peer);
             }
             return;
-        }
-    }
-}
-
-void add_to_chunks(chunk_t **chunks, chunk_t *chunk, int num){
-    for(int i = 0; i < num; i++) {
-        if(chunks[i] == NULL) {
-            chunks[i] = chunk;
-        } else {
-            if (chunk->num < chunks[i]->num) {
-                for(int j=i; j<num-1; j++){
-                    chunks[j+1]=chunks[j];
-                }
-                chunks[i] = chunk;
-            }
         }
     }
 }
@@ -135,7 +250,7 @@ void flood_get(task_t *task, int sock){
             data_packet_t *pkt = make_get_packet(SHA1_HASH_SIZE+HEADERLEN, (char *)chunks[i]->sha1);
             send_packet(sock, pkt, (struct sockaddr *)&peers[i]->addr);
             free_packet(pkt);// 连接创建
-            down_conn_t *down_conn = add_to_down_pool(&down_pool, peers[i], chunks[i]->data);
+            down_conn_t *down_conn = add_to_down_pool(&down_pool, peers[i], chunks[i]);
             timer_start(&down_conn->timer);
         }
     }
@@ -160,18 +275,23 @@ task_t *finish_task(task_t *task) {
     return NULL;
 }
 
-chunk_t *choose_chunk(task_t *task, queue *chunks){
+chunk_t *choose_chunk(task_t *task, queue *chunks, bt_peer_t *peer){
     uint8_t *sha1;
     chunk_t *chunk;
+    chunk_t *ret=NULL;
     while ((sha1 = dequeue(chunks)) != NULL) {
         for (node *cur = task->chunks->head; cur!=NULL; cur=cur->next) {
             chunk = cur->data;
-            if(memcmp(sha1, chunk->sha1, SHA1_HASH_SIZE) == 0 && !chunk->inuse && !chunk->flag){
-                return chunk;
+            if(!chunk->inuse && !chunk->flag && memcmp(sha1, chunk->sha1, SHA1_HASH_SIZE) == 0){
+                if (ret==NULL) {
+                    ret = chunk;
+                }
+                enqueue(chunk->peers, peer);
+                break;
             }
         }
     }
-    return NULL;
+    return ret;
 }
 
 void continue_task(task_t *task, down_pool_t *pool, int sock) {
@@ -194,6 +314,7 @@ void continue_task(task_t *task, down_pool_t *pool, int sock) {
         }
     }
     if (flag) {
+        printf("23333");
         add_to_down_pool(pool, peer, chunk);
         chunk->inuse = 1;
         data_packet_t *pkt = make_get_packet(SHA1_HASH_SIZE + HEADERLEN, (char *) chunk->sha1);
