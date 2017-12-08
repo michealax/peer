@@ -14,6 +14,7 @@
 #define WINDOW_SIZE 8
 #define CHUNK_SIZE 512
 typedef struct chunk_s {
+    int id;
     uint8_t sha1[SHA1_HASH_SIZE];
     int flag; // finished
     int inuse;
@@ -37,6 +38,7 @@ typedef struct up_conn_s {
     int duplicate; // if the duplicate is more than 3, we should send the packet!
     int rwnd; // 流量控制 控制相应窗口
     data_packet_t **pkts;
+    struct timeval timer;
     bt_peer_t *receiver;
 } up_conn_t;
 
@@ -67,6 +69,7 @@ void free_chunk(chunk_t *chunk);
 
 /* task函数 */
 task_t *init_task(const char *, const char *, int);
+int check_task(task_t *task);
 void continue_task(task_t *task, down_pool_t *pool, int sock); // 继续task中的下载
 task_t *finish_task(task_t *task);
 
@@ -90,11 +93,12 @@ void add_to_chunks(chunk_t **chunks, chunk_t *chunk, int num);
 void available_peer(task_t *task, uint8_t *sha1, bt_peer_t *peer);
 
 // task to do
-void flood_get(task_t *task, int sock);
+void flood_get(task_t *task, int sock, down_pool_t *pool);
 
 chunk_t *choose_chunk(task_t *task, queue *chunks, bt_peer_t *peer);
 
 void print_data(char *data, int size);
 
 int remove_stalled_chunks(down_pool_t *pool);
+void remove_unack_peers(up_pool_t *pool, int sock);
 #endif //PEER_TASK_H

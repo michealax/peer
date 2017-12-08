@@ -195,6 +195,7 @@ void peer_run(bt_config_t *config) {
                     continue_task(task, &down_pool, sock);
                 }
             }
+            remove_unack_peers(&up_pool, sock);
         }
     }
 }
@@ -220,19 +221,14 @@ void handle_ihave(data_packet_t *pkt, bt_peer_t *peer){
         if (down_pool.conn==down_pool.max_conn){ // 不存在可用连接
             fprintf(stderr, "Full pool!");
         } else {
-            add_to_down_pool(&down_pool, peer, chunk);
+            down_conn_t *down_conn = add_to_down_pool(&down_pool, peer, chunk);
+            timer_start(&down_conn->timer); // 启动定时器
             chunk->inuse = 1;
             data_packet_t *get=make_get_packet(HEADERLEN+SHA1_HASH_SIZE, (char *)chunk->sha1);
             send_packet(sock, get, (struct sockaddr *) &peer->addr);
             free_packet(get);
         }
     }
-    /* while ((chunk = dequeue(chunks)) != NULL) {
-         available_peer(task, chunk, peer);
-     }
-     if (task->timer.tv_sec == 0) {
-         timer_start(&task->timer);
-     }*/
     free_queue(chunks, 1);
 }
 
@@ -260,7 +256,7 @@ void handle_data(data_packet_t *pkt, bt_peer_t *peer) {
     uint seq = pkt->header.seq_num;
     int data_len = pkt->header.packet_len-HEADERLEN;
     data_packet_t *ack_packet=NULL;
-    if (down_conn != NULL) { // 链接不存在 不知道哪来的数据包(⊙o⊙)
+    if (down_conn != NULL) { // 连接不存在 不知道哪来的数据包(⊙o⊙)
         timer_start(&down_conn->timer);
         if (seq == down_conn->next_ack) {
             memcpy(down_conn->chunk->data + down_conn->pos, pkt->data, (size_t)data_len); // copy the data
@@ -279,7 +275,7 @@ void handle_data(data_packet_t *pkt, bt_peer_t *peer) {
             down_conn->chunk->flag = 1;
             task->chunk_num++;
             remove_from_down_pool(&down_pool, peer);
-            if (task->chunk_num==task->need_num) {
+            if (task->chunk_num==task->need_num && check_task(task)) {
                 task = finish_task(task);
             } else {  // 继续下一请求
                 continue_task(task, &down_pool, sock);
@@ -291,6 +287,7 @@ void handle_data(data_packet_t *pkt, bt_peer_t *peer) {
 void handle_ack(data_packet_t *pkt, bt_peer_t *peer) {
     up_conn_t *up_conn = get_up_conn(&up_pool, peer);
     if (up_conn == NULL) return; // 不存在连接 直接忽略
+    timer_start(&up_conn->timer);
     if (pkt->header.ack_num == CHUNK_SIZE) { // finish total 512 packet and end work
         remove_from_up_pool(&up_pool, peer);
     } else if (pkt->header.ack_num >= up_conn->last_ack + 1) { // 有效ack

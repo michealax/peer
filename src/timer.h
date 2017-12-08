@@ -12,6 +12,5 @@
 
 void timer_start(struct timeval*);
 int timer_now(struct timeval*, struct timeval*);
-void timer_stop(struct timeval*);
 
 #endif //PEER_TIMER_H

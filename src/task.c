@@ -10,8 +10,7 @@
 #include "task.h"
 #include "chunk.h"
 #include "timer.h"
-
-extern down_pool_t down_pool;
+#include "trans.h"
 
 /* up_conn */
 void init_up_pool(up_pool_t *pool, int max_conn) {
@@ -211,7 +210,7 @@ char *find_chunk_data(task_t *task, uint8_t *sha1) {
     return NULL;
 }
 
-void flood_get(task_t *task, int sock){
+void flood_get(task_t *task, int sock, down_pool_t *pool){
     chunk_t *chunks[task->max_conn];
     for(node *cur=task->chunks->head; cur!=NULL; cur=cur->next) {
         chunk_t *chunk = cur->data;
@@ -246,7 +245,7 @@ void flood_get(task_t *task, int sock){
             data_packet_t *pkt = make_get_packet(SHA1_HASH_SIZE+HEADERLEN, (char *)chunks[i]->sha1);
             send_packet(sock, pkt, (struct sockaddr *)&peers[i]->addr);
             free_packet(pkt);// 连接创建
-            down_conn_t *down_conn = add_to_down_pool(&down_pool, peers[i], chunks[i]);
+            down_conn_t *down_conn = add_to_down_pool(pool, peers[i], chunks[i]);
             timer_start(&down_conn->timer);
         }
     }
@@ -263,6 +262,22 @@ task_t *finish_task(task_t *task) {
     free_queue(task->chunks, 0);
     free(task);
     return NULL;
+}
+
+int check_task(task_t *task){
+    int flag = 1;
+    chunk_t *chunk;
+    uint8_t sha1[SHA1_HASH_SIZE];
+    for(node *cur=task->chunks->head; cur!=NULL; cur=cur->next) {
+        chunk=cur->data;
+        shahash((uint8_t *)chunk->data, BT_CHUNK_SIZE, sha1);
+        if (memcmp(sha1, chunk->sha1, SHA1_HASH_SIZE)!=0) {
+            flag=0;
+            chunk->flag = 0;
+            chunk->inuse = 0;
+        }
+    }
+    return flag;
 }
 
 chunk_t *choose_chunk(task_t *task, queue *chunks, bt_peer_t *peer){
@@ -329,6 +344,21 @@ int remove_stalled_chunks(down_pool_t *pool) { // 检查所有chunk是否处于�
     }
     return ret;
 }
+
+void remove_unack_peers(up_pool_t *pool, int sock) {
+    struct timeval now;
+    gettimeofday(&now, NULL); // 获得时间
+    for (int i = 0; i < pool->max_conn; i++) {
+        if (pool->conns[i]!=NULL) {
+            if (timer_now(&pool->conns[i]->timer, &now) > 30000) {
+                remove_from_up_pool(pool, pool->conns[i]->receiver);
+            } else if (timer_now(&pool->conns[i]->timer, &now) > 3000) {
+                send_data_packets(pool->conns[i], sock, (struct sockaddr *)&pool->conns[i]->receiver->addr);
+            }
+        }
+    }
+}
+
 
 void print_data(char *data, int size) {
     for (int i = 0; i < size; i++) {

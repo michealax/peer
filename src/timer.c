@@ -18,11 +18,6 @@ int timer_now(struct timeval *starter, struct timeval *now) {
     return ret;
 }
 
-void timer_stop(struct timeval *timer){
-    timer->tv_usec = 0;
-    timer->tv_sec = 0;
-}
-
 void update(int sample_rtt) {
     double abs = sample_rtt>estimated_rtt?sample_rtt-estimated_rtt:estimated_rtt-sample_rtt;
     estimated_rtt = (1-ALPHA)*estimated_rtt+ALPHA*sample_rtt;
