@@ -24,6 +24,8 @@ int check_i_have(uint8_t *);
 queue *which_i_have(queue *);
 queue *data2chunks_queue(void *);
 
+queue *init_chunk_packet_queue(queue *chunks, data_packet_t *(*make_chunk_packet)(short, void *));
+
 /* send pkts to special one*/
 void send_pkts(int, struct sockaddr *, queue *);
 /* send pkts to everyone */

@@ -23,6 +23,7 @@ void init_up_pool(up_pool_t *pool, int max_conn) {
 up_conn_t *make_up_conn(bt_peer_t *peer, data_packet_t **pkts) { // 用数组控制在发送数据时更为方便
     assert(pkts!=NULL);
     up_conn_t *conn = malloc(sizeof(up_conn_t));
+    memset(conn, 0, sizeof(up_conn_t));
     conn->receiver = peer;
     conn->rwnd = 8;
     conn->pkts = pkts;
@@ -166,20 +167,6 @@ task_t *init_task(const char *output_file, const char *chunk_file, int max_conn)
     return task;
 }
 
-void add_to_chunks(chunk_t **chunks, chunk_t *chunk, int num){
-    for(int i = 0; i < num; i++) {
-        if(chunks[i] == NULL) {
-            chunks[i] = chunk;
-        } else {
-            if (chunk->num < chunks[i]->num) {
-                for(int j=i; j<num-1; j++){
-                    chunks[j+1]=chunks[j];
-                }
-                chunks[i] = chunk;
-            }
-        }
-    }
-}
 
 void available_peer(task_t *task, uint8_t *sha1, bt_peer_t *peer){
     assert(task != NULL);
@@ -187,11 +174,11 @@ void available_peer(task_t *task, uint8_t *sha1, bt_peer_t *peer){
     for(node *current=task->chunks->head; current!=NULL; current=current->next) {
         chunk = (chunk_t *)current->data;
         if(memcmp(sha1, chunk->sha1, SHA1_HASH_SIZE) == 0){
-            chunk->num+=1;
             if(chunk->peers == NULL) {
                 chunk->peers = make_queue();
             }
             if(!check_peers(chunk->peers, peer)) {
+                chunk->num+=1;
                 enqueue(chunk->peers, peer);
             }
             return;
@@ -210,53 +197,13 @@ char *find_chunk_data(task_t *task, uint8_t *sha1) {
     return NULL;
 }
 
-void flood_get(task_t *task, int sock, down_pool_t *pool){
-    chunk_t *chunks[task->max_conn];
-    for(node *cur=task->chunks->head; cur!=NULL; cur=cur->next) {
-        chunk_t *chunk = cur->data;
-        if(chunk->flag){
-            continue;
-        } else {
-            add_to_chunks(chunks, chunk, task->max_conn);
-        }
-    }
-    bt_peer_t *peers[task->max_conn];
-    int true_num = 0;
-    for(int i = 0; i < task->max_conn; i++) {
-        for(node *cur = chunks[i]->peers->head; cur != NULL; cur=cur->next) {
-            int flag = 0;
-            bt_peer_t *peer = cur->data;
-            for(int j=0; j<i; j++) {
-                if (peers[j]->id == peer->id) {
-                    flag = 1;
-                    break;
-                }
-            }
-            if(!flag) {
-                peers[i] = peer;
-                true_num ^= (1<<i);
-                break;
-            }
-        }
-    }
-    for(int i=0; i<task->max_conn; i++){
-        int flag = true_num&(1<<i);
-        if (flag) {
-            data_packet_t *pkt = make_get_packet(SHA1_HASH_SIZE+HEADERLEN, (char *)chunks[i]->sha1);
-            send_packet(sock, pkt, (struct sockaddr *)&peers[i]->addr);
-            free_packet(pkt);// 连接创建
-            down_conn_t *down_conn = add_to_down_pool(pool, peers[i], chunks[i]);
-            timer_start(&down_conn->timer);
-        }
-    }
-}
-
 task_t *finish_task(task_t *task) {
     chunk_t *chunk;
     FILE *fp = fopen(task->output_file, "wb+"); // 内存映射方式直接读写存在一定问题
     for(uint j = 0; j < task->need_num; j++) {
         chunk = dequeue(task->chunks);
         fwrite(chunk->data, 512, 1024, fp);
+        free_chunk(chunk);
     }
     fclose(fp);
     free_queue(task->chunks, 0);
@@ -300,24 +247,36 @@ chunk_t *choose_chunk(task_t *task, queue *chunks, bt_peer_t *peer){
 }
 
 void continue_task(task_t *task, down_pool_t *pool, int sock) {
+    pqueue_t *pq = make_pqueue();
+    queue *q = make_queue();
     chunk_t *chunk=NULL;
     bt_peer_t *peer=NULL;
     int flag = 0;
     for(node *cur=task->chunks->head; cur!=NULL; cur=cur->next) {
         chunk = cur->data;
-        if (!chunk->flag && !chunk->inuse) { // 查找chunk是否需要下载&&是否正在被下载
-            for(node *n=chunk->peers->head; n!=NULL; n=n->next) {
-                peer=n->data;
-                if(get_down_conn(pool, peer)==NULL) { // 查找节点是否可用
-                    flag = 1;
-                    break;
-                }
-            }
-        }
-        if (flag) {
-            break;
+        if(chunk->flag || chunk->inuse){ // 查找chunk是否需要下载&&是否正在被下载
+            continue;
+        } else {
+            enpqueue(pq, chunk, chunk->num);
         }
     }
+    while ((chunk=depqueue(pq))!=NULL) {
+        for(node *cur=chunk->peers->head; cur!=NULL; cur=cur->next) {
+            flag=1;
+            peer = cur->data;
+            if(get_down_conn(pool, peer)==NULL) { // 查找节点是否可用
+                flag=2;
+                break;
+            }
+        }
+        if(flag==2) {
+            break;
+        } else if (flag==0){
+            enqueue(q, chunk->sha1);
+        }
+        flag = 0;
+    }
+    free_pqueue(pq); // 尽量使用稀缺块优先
     if (flag) {
         add_to_down_pool(pool, peer, chunk);
         chunk->inuse = 1;
@@ -325,8 +284,15 @@ void continue_task(task_t *task, down_pool_t *pool, int sock) {
         send_packet(sock, pkt, (struct sockaddr *)&peer->addr);
         free_packet(pkt);
     }
+    if (q->n) {
+        queue *ret=init_chunk_packet_queue(q, make_whohas_packet);
+        flood_whohas(sock, ret);
+        free_queue(ret, 0);
+    }
+    free_queue(q, 0);
 }
 
+/* 清空失效节点 */
 int remove_stalled_chunks(down_pool_t *pool) { // 检查所有chunk是否处于停滞状态
     struct timeval now;
     gettimeofday(&now, NULL); // 获得时间
@@ -345,6 +311,7 @@ int remove_stalled_chunks(down_pool_t *pool) { // 检查所有chunk是否处于�
     return ret;
 }
 
+/* 未回应ack对等方的处理 */
 void remove_unack_peers(up_pool_t *pool, int sock) {
     struct timeval now;
     gettimeofday(&now, NULL); // 获得时间
@@ -352,13 +319,16 @@ void remove_unack_peers(up_pool_t *pool, int sock) {
         if (pool->conns[i]!=NULL) {
             if (timer_now(&pool->conns[i]->timer, &now) > 30000) {
                 remove_from_up_pool(pool, pool->conns[i]->receiver);
-            } else if (timer_now(&pool->conns[i]->timer, &now) > 3000) {
+            } else if (timer_now(&pool->conns[i]->timer, &now) > 2000) {
+                if (pool->conns[i]->last_ack < 0) {
+                    pool->conns[i]->last_ack = 0;
+                }
+                pool->conns[i]->last_sent = pool->conns[i]->last_ack;
                 send_data_packets(pool->conns[i], sock, (struct sockaddr *)&pool->conns[i]->receiver->addr);
             }
         }
     }
 }
-
 
 void print_data(char *data, int size) {
     for (int i = 0; i < size; i++) {

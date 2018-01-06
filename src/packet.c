@@ -52,8 +52,6 @@ data_packet_t *make_denied_packet() {
     return make_packet(PKT_DENIED, HEADERLEN, 0, 0, NULL);
 }
 
-
-
 /* check whether it is a right packet or error */
 int packet_parser(void* packet) {
     data_packet_t* pkt = (data_packet_t*)packet;
@@ -71,6 +69,7 @@ int packet_parser(void* packet) {
     return header.packet_type;
 }
 
+/* 网络端转换 */
 void host2net(data_packet_t *pkt) {
     pkt->header.magicnum = htons(pkt->header.magicnum);
     pkt->header.header_len = htons(pkt->header.header_len);
@@ -79,6 +78,7 @@ void host2net(data_packet_t *pkt) {
     pkt->header.ack_num = htonl(pkt->header.ack_num);
 }
 
+/* 本地端转换 */
 void net2host(data_packet_t *pkt) {
     pkt->header.magicnum = ntohs(pkt->header.magicnum);
     pkt->header.header_len = ntohs(pkt->header.header_len);
@@ -91,9 +91,10 @@ void send_packet(int sock, data_packet_t *pkt, struct sockaddr *to) {
     size_t len = (size_t)pkt->header.packet_len;
     host2net(pkt);
     spiffy_sendto(sock, pkt, len, 0, to, sizeof(*to));
-    net2host(pkt); // 不一定需要 假如发完直接free则无需转换
+    net2host(pkt);
 }
 
+/* debug 辅助输出 */
 void print_packet(data_packet_t *pkt) {
     printf("magicnum: %d\n", pkt->header.magicnum);
     printf("version: %d\n", pkt->header.version);

@@ -16,6 +16,19 @@ typedef struct queue {
     int n;
 } queue;
 
+/* 优先队列 */
+typedef struct priority_node {
+    void *data;
+    int priority;
+    struct priority_node *next;
+} pnode_t;
+
+typedef struct priority_queue {
+    pnode_t *head;
+    pnode_t *tail;
+    int n;
+} pqueue_t;
+
 queue *make_queue();
 
 void init_queue(queue *);
@@ -26,6 +39,16 @@ void enqueue(queue *, void *);
 
 void *dequeue(queue *);
 
+/* 优先队列 */
+pqueue_t *make_pqueue();
+
+void enpqueue(pqueue_t *, void *, int);
+
+void *depqueue(pqueue_t *);
+
+void free_pqueue(pqueue_t *);
+
+/* 没有使用到的函数 */
 queue *queue_copy(queue *, size_t);
 
 int is_in_queue(queue *, void *, size_t);

@@ -3,10 +3,6 @@
 //
 #include <stdio.h>
 #include <malloc.h>
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
 #include "chunk.h"
 #include "packet.h"
 #include "trans.h"
@@ -148,21 +144,17 @@ data_packet_t **init_data_array(uint8_t *sha) {
         fprintf(stderr, "Error!: No such chunk: %s", sha_buf);
         return NULL;
     }
-    // map the file to memory
-    int data_fd = open(master_data_file, O_RDONLY);
-    struct stat master_data_stat;
-    fstat(data_fd, &master_data_stat);
-    char *master_data = mmap(0, (size_t)master_data_stat.st_size, PROT_READ, MAP_SHARED, data_fd, 0);
-    close(data_fd);
-    // make the data pkts
-    data_packet_t **data_pkts = malloc(BT_CHUNK_KSIZE*sizeof(data_packet_t *));
+    fp = fopen(master_data_file, "r");
+    fseek(fp, i*BT_CHUNK_SIZE, SEEK_SET);
+    char data[1024];
     data_packet_t *pkt;
-    for(uint j = 0; j < BT_CHUNK_KSIZE; j++){
-        char *data = master_data+i*BT_CHUNK_SIZE+j*SEND_PACKET_DATA_LEN;
+    data_packet_t **data_pkts = malloc(BT_CHUNK_KSIZE*sizeof(data_packet_t *));
+    for (uint j = 0; j < BT_CHUNK_KSIZE; j++) {
+        fread(data, 1024, 1, fp);
         pkt = make_data_packet(HEADERLEN+SEND_PACKET_DATA_LEN, 0, j+1, data);
         data_pkts[j] = pkt;
     }
-    munmap(master_data, (size_t)master_data_stat.st_size); // munmap the memory
+    fclose(fp);
     return data_pkts;
 }
 

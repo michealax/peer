@@ -35,9 +35,13 @@ up_pool_t up_pool;
 down_pool_t down_pool;
 
 void handle_whohas(data_packet_t *pkt, bt_peer_t *peer);
+
 void handle_ihave(data_packet_t *pkt, bt_peer_t *peer);
+
 void handle_get(data_packet_t *pkt, bt_peer_t *peer);
+
 void handle_data(data_packet_t *pkt, bt_peer_t *peer);
+
 void handle_ack(data_packet_t *pkt, bt_peer_t *peer);
 
 void peer_run(bt_config_t *config);
@@ -174,11 +178,14 @@ void peer_run(bt_config_t *config) {
 
     while (run) {
         int nfds;
+        struct timeval timer;
+        timer.tv_sec = 2;
+        timer.tv_usec = 0;
         FD_SET(STDIN_FILENO, &readfds); // 键盘输入加入fd set中
         FD_SET(sock, &readfds);
 
         // nfds 可供读写的fd值
-        nfds = select(sock + 1, &readfds, NULL, NULL, NULL); //sock是最大fd描述符，需要设置成最大描述符+1
+        nfds = select(sock + 1, &readfds, NULL, NULL, &timer); //sock是最大fd描述符，需要设置成最大描述符+1
 
         if (nfds > 0) {
             if (FD_ISSET(sock, &readfds)) { //检查文件符是否可供读写
@@ -188,18 +195,18 @@ void peer_run(bt_config_t *config) {
             if (FD_ISSET(STDIN_FILENO, &readfds)) {
                 process_user_input(STDIN_FILENO, userbuf, handle_user_input, "Currently unused");
             }
-        } else {
-            if (task != NULL) { // 说明task 但task完成时不进入该分支
-                int f = remove_stalled_chunks(&down_pool);
-                if(f){
-                    continue_task(task, &down_pool, sock);
-                }
-            }
-            remove_unack_peers(&up_pool, sock);
         }
+        if (task != NULL) { // 说明task 但task完成时不进入该分支
+            int f = remove_stalled_chunks(&down_pool);
+            if (f) {
+                continue_task(task, &down_pool, sock);
+            }
+        }
+        remove_unack_peers(&up_pool, sock);
     }
 }
 
+/* 处理ihave */
 void handle_whohas(data_packet_t *pkt, bt_peer_t *peer) {
     queue *chunks = data2chunks_queue(pkt->data); // since every queue made by malloc so we don't care about NULL ptr
     queue *ihave = which_i_have(chunks);
@@ -212,28 +219,38 @@ void handle_whohas(data_packet_t *pkt, bt_peer_t *peer) {
     free_queue(chunks, 0);
 }
 
-void handle_ihave(data_packet_t *pkt, bt_peer_t *peer){
-    queue *chunks = data2chunks_queue(pkt->data);
-    chunk_t *chunk = choose_chunk(task, chunks, peer);// 查找需要下载的块
+/* 处理ihave */
+void handle_ihave(data_packet_t *pkt, bt_peer_t *peer) {
     if (get_down_conn(&down_pool, peer) != NULL) { // 假设连接已存在 返回
         return; // already use the conn
-    } else{
-        if (down_pool.conn==down_pool.max_conn){ // 不存在可用连接
+    } else {
+        queue *chunks = data2chunks_queue(pkt->data);
+        for (node *n = chunks->head; n != NULL; n = n->next) {
+            uint8_t *sha1 = n->data;
+            available_peer(task, sha1, peer);
+        }
+        if (down_pool.conn == down_pool.max_conn) { // 不存在可用连接
             fprintf(stderr, "Full pool!");
         } else {
+            chunk_t *chunk = choose_chunk(task, chunks, peer);// 查找需要下载的块
             down_conn_t *down_conn = add_to_down_pool(&down_pool, peer, chunk);
             timer_start(&down_conn->timer); // 启动定时器
             chunk->inuse = 1;
-            data_packet_t *get=make_get_packet(HEADERLEN+SHA1_HASH_SIZE, (char *)chunk->sha1);
+            data_packet_t *get = make_get_packet(HEADERLEN + SHA1_HASH_SIZE, (char *) chunk->sha1);
             send_packet(sock, get, (struct sockaddr *) &peer->addr);
             free_packet(get);
         }
+        free_queue(chunks, 1);
     }
-    free_queue(chunks, 1);
 }
 
-void handle_get(data_packet_t *pkt, bt_peer_t *peer){
+/* 处理get */
+void handle_get(data_packet_t *pkt, bt_peer_t *peer) {
     up_conn_t *up_conn = get_up_conn(&up_pool, peer);
+    if (up_conn != NULL && up_conn->last_sent == 512) {
+        remove_from_up_pool(&up_pool, peer);
+        up_conn = NULL;
+    }
     if (up_conn == NULL) {
         if (up_pool.conn >= up_pool.max_conn) { // 已满 拒绝请求
             data_packet_t *denied_pkt = make_denied_packet();
@@ -242,6 +259,7 @@ void handle_get(data_packet_t *pkt, bt_peer_t *peer){
         } else {
             data_packet_t **pkts = init_data_array((uint8_t *) pkt->data);
             up_conn = add_to_up_pool(&up_pool, peer, pkts);
+            timer_start(&up_conn->timer); // 启动定时器
             if (up_conn != NULL) {
                 send_data_packets(up_conn, sock, (struct sockaddr *) &peer->addr);
             }
@@ -251,31 +269,32 @@ void handle_get(data_packet_t *pkt, bt_peer_t *peer){
     }
 }
 
+/* 处理data */
 void handle_data(data_packet_t *pkt, bt_peer_t *peer) {
     down_conn_t *down_conn = get_down_conn(&down_pool, peer);
     uint seq = pkt->header.seq_num;
-    int data_len = pkt->header.packet_len-HEADERLEN;
-    data_packet_t *ack_packet=NULL;
+    int data_len = pkt->header.packet_len - HEADERLEN;
+    data_packet_t *ack_packet = NULL;
     if (down_conn != NULL) { // 连接不存在 不知道哪来的数据包(⊙o⊙)
         timer_start(&down_conn->timer);
         if (seq == down_conn->next_ack) {
-            memcpy(down_conn->chunk->data + down_conn->pos, pkt->data, (size_t)data_len); // copy the data
-            down_conn->pos+=data_len;
+            memcpy(down_conn->chunk->data + down_conn->pos, pkt->data, (size_t) data_len); // copy the data
+            down_conn->pos += data_len;
             down_conn->next_ack += 1;
             ack_packet = make_ack_packet(seq, 0); // 经过检测发现立刻发送效率比较高(逃
         } else {
             ack_packet = make_ack_packet(down_conn->next_ack - 1, 0); // 立刻发送冗余ack
         }
-        if (ack_packet!=NULL) {
+        if (ack_packet != NULL) {
             send_packet(sock, ack_packet, (struct sockaddr *) &peer->addr);
             timer_start(&down_conn->timer); // 重启定时器
             free_packet(ack_packet);
         }
-        if (down_conn->pos==BT_CHUNK_SIZE) { // pos 位置移到末尾 下载完成
+        if (down_conn->pos == BT_CHUNK_SIZE) { // pos 位置移到末尾 下载完成
             down_conn->chunk->flag = 1;
             task->chunk_num++;
             remove_from_down_pool(&down_pool, peer);
-            if (task->chunk_num==task->need_num && check_task(task)) {
+            if (task->chunk_num == task->need_num && check_task(task)) {
                 task = finish_task(task);
             } else {  // 继续下一请求
                 continue_task(task, &down_pool, sock);
@@ -284,6 +303,7 @@ void handle_data(data_packet_t *pkt, bt_peer_t *peer) {
     }
 }
 
+/* 处理ack */
 void handle_ack(data_packet_t *pkt, bt_peer_t *peer) {
     up_conn_t *up_conn = get_up_conn(&up_pool, peer);
     if (up_conn == NULL) return; // 不存在连接 直接忽略

@@ -87,18 +87,16 @@ down_conn_t *add_to_down_pool(down_pool_t *pool, bt_peer_t *peer, chunk_t *chunk
 void remove_from_down_pool(down_pool_t *pool, bt_peer_t *peer);
 down_conn_t *make_down_conn(bt_peer_t *peer, chunk_t *chunk);
 
-/* 用于实现最稀缺块优先的函数 可能在pj中无用 */
+/* 用于实现最稀缺块优先的函数 pj中部分使用了该策略 */
 char *find_chunk_data(task_t *task, uint8_t *sha1);
-void add_to_chunks(chunk_t **chunks, chunk_t *chunk, int num);
-void available_peer(task_t *task, uint8_t *sha1, bt_peer_t *peer);
 
-// task to do
-void flood_get(task_t *task, int sock, down_pool_t *pool);
+void available_peer(task_t *task, uint8_t *sha1, bt_peer_t *peer);
 
 chunk_t *choose_chunk(task_t *task, queue *chunks, bt_peer_t *peer);
 
 void print_data(char *data, int size);
 
 int remove_stalled_chunks(down_pool_t *pool);
+
 void remove_unack_peers(up_pool_t *pool, int sock);
 #endif //PEER_TASK_H
